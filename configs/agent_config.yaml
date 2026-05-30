@@ -1,0 +1,103 @@
+# ============================================================
+# Agent 模型配置
+# ============================================================
+# 模型解析优先级（Worker，由高到低）：
+#   1. 环境变量 AGENTIC_RAG_WORKER_MODEL — 全局覆盖所有 Worker
+#   2. spawn_worker 时传入的 model 参数 — 调用时动态指定
+#   3. 本文件 agents.<name>.model — agent 级别静态覆盖
+#   4. 本文件 defaults.worker — 全局 Worker 默认值
+#   5. inherit — 继承 Coordinator 当前模型
+# ============================================================
+
+defaults:
+  coordinator: "deepseek-v4-pro"       # Coordinator 默认（思考开 + high）
+  worker: "deepseek-v4-flash"          # Worker 默认（flash 不支持思考）
+  image: "seedream-image"              # 图像生成
+
+# 可选：为特定 agent 覆盖模型（优先级高于 defaults.worker）
+# agents:
+#   fast-worker:
+#     model: "doubao-1-6-flash"
+#   expert-worker:
+#     model: "deepseek-v3.2"
+
+providers:
+  # ============================================================
+  # DeepSeek 官方 API — deepseek-v4-pro 思考三模式
+  # ============================================================
+  # 切换方式：
+  #   1. 改 defaults.coordinator 的值（全局生效）
+  #   2. 改 AGENTIC_RAG_WORKER_MODEL 环境变量（所有 Worker 生效）
+  #   3. spawn_worker(model="...") 动态指定
+
+  # 模式 A：思考开启 + 高强度推理（默认）
+  deepseek-v4-pro:
+    model_id: "deepseek-v4-pro"
+    base_url: "https://api.deepseek.com"
+    api_key_env: "DEEPSEEK_API_KEY"
+    model_kwargs:
+      reasoning_effort: "high"
+    extra_body: {"thinking": {"type": "enabled"}}
+
+  # 模式 B：思考开启 + 最大强度推理（适合复杂数学/逻辑）
+  deepseek-v4-pro-max:
+    model_id: "deepseek-v4-pro"
+    base_url: "https://api.deepseek.com"
+    api_key_env: "DEEPSEEK_API_KEY"
+    model_kwargs:
+      reasoning_effort: "max"
+    extra_body: {"thinking": {"type": "enabled"}}
+
+  # 模式 C：思考关闭（纯聊天模式，省 token）
+  deepseek-v4-pro-nothink:
+    model_id: "deepseek-v4-pro"
+    base_url: "https://api.deepseek.com"
+    api_key_env: "DEEPSEEK_API_KEY"
+    extra_body: {"thinking": {"type": "disabled"}}
+
+  # -- v4-flash（轻量模型，显式关闭思考）--
+  deepseek-v4-flash:
+    model_id: "deepseek-v4-flash"
+    base_url: "https://api.deepseek.com"
+    api_key_env: "DEEPSEEK_API_KEY"
+    extra_body: {"thinking": {"type": "disabled"}}
+
+  # ============================================================
+  # 火山引擎 Ark（豆包 & DeepSeek v3.2）
+  # ============================================================
+  doubao-1-6-flash:
+    model_id: "doubao-seed-1-6-flash-250828"
+    base_url: "https://ark.cn-beijing.volces.com/api/v3"
+    api_key_env: "volcengine_API_KEY"
+  deepseek-v3.2:
+    model_id: "deepseek-v3-2-251201"
+    base_url: "https://ark.cn-beijing.volces.com/api/v3"
+    api_key_env: "volcengine_API_KEY"
+  seedream-image:
+    model_id: "ep-20260401134615-5qpj8"
+    base_url: "https://ark.cn-beijing.volces.com/api/v3"
+    api_key_env: "volcengine_API_KEY"
+
+rag:
+  data_path: "Data"
+  chunk_max_size: 2000
+  embedding:
+    model_id: "text-embedding-v4"
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    api_key_env: "aliyun_API_KEY"
+    batch_size: 10
+  reranker:
+    model_id: "qwen3-rerank"
+    base_url: "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
+    api_key_env: "aliyun_API_KEY"
+  chroma:
+    path: ".data/chroma_db"
+    collection_name: "kb_collection"
+  docstore:
+    path: ".data/docstore"
+
+tools:
+  amap:
+    base_url: "https://restapi.amap.com/v3"
+  qweather:
+    base_url: "https://m42vhfja65.re.qweatherapi.com"

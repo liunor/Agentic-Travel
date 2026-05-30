@@ -1,0 +1,25 @@
+# skills/base_tools.yaml
+# Coordinator 通过此文件了解有哪些基础工具可以分配给 Worker。
+# 每个条目的描述会注入 system prompt 的"通用基础工具"段落。
+
+# -- 知识库（最高优先级） --
+search_knowledge_base: "【必须优先使用】搜索本地权威知识库，覆盖景区介绍、历史文化、美食攻略、酒店推荐、当地风俗、旅游指南等。凡是知识性问题，必须先调此工具；只有它明确返回\"未找\"时，才考虑 web_search。"
+
+# -- 天气 --
+weather_api: "查询指定城市的实时天气和气温"
+travel_advice_api: "获取城市的生活指数建议（穿衣、紫外线、运动、旅游等）"
+astronomy_api: "查询城市的日出日落、月升月落及月相（摄影/夜游规划）"
+weather_forecast_api: "查询未来3天天气预报"
+
+# -- 地图 --
+walking_plan_api: "查询起点到终点的步行路线（距离、耗时、详细步骤）"
+distance_api: "测量两点间的直线/驾车/步行距离"
+around_search_api: "搜索指定地址周边的POI（餐厅、酒店等）"
+static_map_api: "生成指定地址的静态地图图片URL"
+
+# -- 搜索（仅兜底） --
+web_search: "【仅兜底】搜索引擎。只能在 search_knowledge_base、天气、地图等所有预设工具均无结果或报错时才能调用。不可作为首选。"
+get_current_time: "获取当前真实系统时间"
+
+# -- 图像 --
+generate_image_tool: "文生图画画，根据文本描述生成图片"
