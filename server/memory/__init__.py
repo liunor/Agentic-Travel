@@ -5,9 +5,9 @@
 记忆检索流程（3 步）：
   1. scan_memory_headers()  - 轻量扫描：仅读取每个文件前 30 行（frontmatter + 预览）
   2. LLM 选择器（injection.py）- 模型根据用户提问选取相关文件
-  3. read_memory_topic()    - 按需加载：仅对选中文件读取完整内容
+  3. 加载选中记忆的完整内容，注入上下文
 
-BM25（search.py）作为备用工具，注册在 memory_tool.py 中供 Coordinator 主动调用。
+记忆的写入与检索全部由后台 sub-agent 自动完成，Coordinator 无任何记忆操作能力。
 """
 
 from server.memory.types import TRAVEL_MEMORY_TYPES, is_valid_memory_type, get_type_display_name

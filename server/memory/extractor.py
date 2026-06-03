@@ -11,7 +11,7 @@ from typing import List, Optional
 from server.memory.manager import MemoryManager
 from server.agent.llm_factory import get_tool_llm
 from server.memory.types import TRAVEL_MEMORY_TYPES
-from langchain_core.messages import BaseMessage, AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import BaseMessage, AIMessage, HumanMessage, SystemMessage
 
 logger = get_logger("shiliu.memory.extractor")
 
@@ -87,21 +87,6 @@ def _extract_text_content(content) -> str:
         return " ".join(p for p in parts if p)
     return ""
 
-
-def has_memory_writes_since(messages: List[BaseMessage], last_processed_len: int) -> bool:
-    """
-    检查自上一次处理以来，Coordinator 是否已经主动调用过 save_memory_topic 或 delete_memory_topic。
-    如果是，跳过后台提取以避免双重写入冲突。
-    """
-    recent_messages = messages[last_processed_len:] if last_processed_len < len(messages) else []
-    for msg in recent_messages:
-        if isinstance(msg, AIMessage) and msg.tool_calls:
-            for tc in msg.tool_calls:
-                if tc["name"] in ("save_memory_topic", "delete_memory_topic"):
-                    return True
-    return False
-
-
 def _build_dialog_text(messages: List[BaseMessage]) -> str:
     """
     从消息列表中提取对话文本，兼容所有消息类型。
@@ -131,7 +116,7 @@ async def extract_travel_memories(app, session_id: str, last_processed_len: int 
     """
     logger.info("开始进行后台旅程记忆提取...", session_id=session_id)
 
-    # 1. 获取当前 LangGraph 线程的最新状态
+    # 获取当前 LangGraph 线程的最新状态
     config = {"configurable": {"thread_id": session_id}}
     try:
         state = await app.aget_state(config)
@@ -146,12 +131,7 @@ async def extract_travel_memories(app, session_id: str, last_processed_len: int 
 
     logger.debug("获取到消息历史", total=len(messages), last_processed=last_processed_len)
 
-    # 2. 检查是否有 Coordinator 主动写入，避开双写冲突
-    if has_memory_writes_since(messages, last_processed_len):
-        logger.info("检测到协调员已在此轮对话中主动写入或修改了记忆，跳过后台自动提取。")
-        return
-
-    # 3. 提取最近一轮对话文本（增量：自上次处理位置之后的消息）
+    # 提取最近一轮对话文本（增量：自上次处理位置之后的消息）
     if last_processed_len < len(messages):
         recent_messages = messages[last_processed_len:]
     else:
@@ -169,7 +149,7 @@ async def extract_travel_memories(app, session_id: str, last_processed_len: int 
 
     logger.debug("对话文本提取完成", chars=len(dialog_text))
 
-    # 4. 加载现有记忆清单与缓存的 System Prompt
+    # 加载现有记忆清单与缓存的 System Prompt
     manager = MemoryManager()
     index_content = manager.load_memory_index()
 
@@ -192,7 +172,7 @@ async def extract_travel_memories(app, session_id: str, last_processed_len: int 
 
     logger.debug("记忆提取 prompt 组装完毕，正在调用大模型进行结构化分析...")
 
-    # 5. 调用 LLM 并使用 with_structured_output 进行强类型提取
+    # 调用 LLM 并使用 with_structured_output 进行强类型提取
     try:
         llm = get_tool_llm()
         structured_llm = llm.with_structured_output(MemoryExtractionResult)
@@ -205,7 +185,7 @@ async def extract_travel_memories(app, session_id: str, last_processed_len: int 
         logger.error("调用大模型提取旅行记忆失败", error=str(e))
         return
 
-    # 6. 执行提取出的记忆操作
+    # 执行提取出的记忆操作
     if not result or not result.operations:
         logger.info("经大模型分析，本轮对话未产生需要持久化的核心旅行记忆。")
         return

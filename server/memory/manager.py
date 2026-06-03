@@ -122,36 +122,6 @@ class MemoryManager:
         memories.sort(key=lambda x: x["mtime"], reverse=True)
         return memories
 
-    # ── 【完整内容扫描】：仅供 BM25 全文检索工具使用，常规流程请勿调用 ──
-    def scan_memory_full(self) -> List[Dict[str, Any]]:
-        """
-        扫描全部记忆文件，读取完整内容（含正文）。
-        注意：该方法 IO 开销较大，仅供 BM25 全文检索工具（search_memory_bm25）调用，
-        常规记忆检索流程请使用 scan_memory_headers()。
-        返回字段：filename, name, type, description, content, mtime
-        """
-        memories = []
-        for file in os.listdir(self.memory_dir):
-            if not file.endswith(".md") or file == INDEX_FILENAME:
-                continue
-            file_path = os.path.join(self.memory_dir, file)
-            try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    raw_content = f.read()
-                frontmatter, body = self._parse_frontmatter(raw_content)
-                memories.append({
-                    "filename": file,
-                    "name": frontmatter.get("name", os.path.splitext(file)[0]),
-                    "type": frontmatter.get("type", "unknown"),
-                    "description": frontmatter.get("description", "无描述"),
-                    "content": body,
-                    "mtime": os.path.getmtime(file_path),
-                })
-            except Exception:
-                continue
-        memories.sort(key=lambda x: x["mtime"], reverse=True)
-        return memories
-
     # ── 【陈旧度检测】──
     def check_stale_memories(self, days: int = STALE_WARN_DAYS) -> List[Dict[str, Any]]:
         """
@@ -205,9 +175,15 @@ class MemoryManager:
                 type_display = get_type_display_name(mem["type"])
                 age_days = int((now - mem["mtime"]) / 86400)
                 stale_mark = " [陈旧]" if age_days >= STALE_WARN_DAYS else ""
+                # 去除描述中已有的类型标签前缀，避免双重标签（如"**[基础画像]** [基础画像] ..."）
+                desc = mem["description"]
+                for disp in (get_type_display_name(t) for t in TRAVEL_MEMORY_TYPES):
+                    if desc.startswith(f"[{disp}]"):
+                        desc = desc[len(f"[{disp}]"):].strip()
+                        break
                 lines.append(
                     f"- [{mem['filename']}]({mem['filename']}) — "
-                    f"**[{type_display}]**{stale_mark} {mem['description']}"
+                    f"**[{type_display}]**{stale_mark} {desc}"
                 )
 
         raw = "\n".join(lines) + "\n"
