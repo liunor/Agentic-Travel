@@ -17,6 +17,10 @@ from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional, Set
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage, SystemMessage
 
+from utils.tokens import token_count_with_estimation, rough_estimation_for_messages
+
+MAX_CONTEXT_TOKENS = 200_000
+
 logger = get_logger("shiliu.session_storage")
 
 CHAT_HISTORY_DIR = os.path.join(".data", "chat_history")
@@ -145,6 +149,7 @@ class TranscriptMessage(BaseModel):
     content: Any = Field(description="消息内容")
     toolCalls: Optional[List[Dict[str, Any]]] = Field(default=None, description="工具调用列表，仅 type=assistant 时存在")
     toolResult: Optional[Dict[str, Any]] = Field(default=None, description="工具执行结果，仅 type=tool_result 时存在")
+    usage: Optional[Dict[str, Any]] = Field(default=None, description="API消耗的精确token(usage_metadata)")
 
 
 class SessionStorageManager:
@@ -209,6 +214,7 @@ class SessionStorageManager:
         tool_calls = None
         tool_result = None
         content = msg.content
+        usage = getattr(msg, "usage_metadata", None)
 
         if isinstance(msg, HumanMessage):
             msg_type = "user"
@@ -263,7 +269,8 @@ class SessionStorageManager:
             role=msg_role,
             content=content,
             toolCalls=tool_calls,
-            toolResult=tool_result
+            toolResult=tool_result,
+            usage=usage
         )
 
     def enqueue_messages(self, session_id: str, messages: List[BaseMessage]):
@@ -302,6 +309,76 @@ async def record_transcript(session_id: str, messages: List[BaseMessage]):
     暴露给上层的封装调用：对比当前 Graph 内的 messages 链，提取并附加新消息。
     """
     global_session_storage.enqueue_messages(session_id, messages)
+
+def trim_context(messages: List[BaseMessage]) -> List[BaseMessage]:
+    """
+    对实时对话中的 LangChain BaseMessage 列表进行上下文窗口裁剪。
+    使用混合计费策略（从后向前找最后一条带 usage_metadata 的 AIMessage 作为精确锚点，
+    锚点之后用粗略估算），超过 MAX_CONTEXT_TOKENS 时从前往后丢弃最旧的非 system 消息。
+    返回裁剪后的消息列表（若无需裁剪则返回原列表）。
+    """
+    if not messages:
+        return messages
+
+    current_tokens = token_count_with_estimation(messages)
+    if current_tokens <= MAX_CONTEXT_TOKENS:
+        return messages
+
+    system_msgs = [m for m in messages if isinstance(m, SystemMessage)]
+    non_sys_msgs = [m for m in messages if not isinstance(m, SystemMessage)]
+
+    tokens_to_drop = current_tokens - MAX_CONTEXT_TOKENS
+    dropped_tokens = 0
+    dropped_count = 0
+
+    while non_sys_msgs and dropped_tokens < tokens_to_drop:
+        non_sys_msgs.pop(0)
+        dropped_count += 1
+        # 每丢弃一条消息后重新估算剩余总量，避免累积估算误差
+        remaining = system_msgs + non_sys_msgs
+        current_tokens = token_count_with_estimation(remaining)
+        if current_tokens <= MAX_CONTEXT_TOKENS:
+            break
+        # 更新仍需释放的 token 数
+        tokens_to_drop = current_tokens - MAX_CONTEXT_TOKENS
+
+    kept_uuids = {m.id for m in system_msgs + non_sys_msgs}
+    result = [m for m in messages if m.id in kept_uuids]
+
+    if dropped_count > 0:
+        logger.info(
+            "上下文窗口压缩完成",
+            original_count=len(messages),
+            dropped_count=dropped_count,
+            kept_count=len(result),
+            estimated_tokens=token_count_with_estimation(result),
+        )
+    return result
+
+
+def compress_messages(messages: List[TranscriptMessage]) -> List[TranscriptMessage]:
+    """
+    使用混合计费策略计算 Token，并在超过 MAX_CONTEXT_TOKENS (200K) 时，
+    从前往后丢弃最旧的非 system 消息，直至满足大小限制。
+    """
+    current_tokens = token_count_with_estimation(messages)
+    if current_tokens <= MAX_CONTEXT_TOKENS:
+        return messages
+
+    system_msgs = [m for m in messages if m.role == "system" or m.type == "system"]
+    non_sys_msgs = [m for m in messages if m.role != "system" and m.type != "system"]
+
+    tokens_to_drop = current_tokens - MAX_CONTEXT_TOKENS
+    dropped_tokens = 0
+
+    while non_sys_msgs and dropped_tokens < tokens_to_drop:
+        # 丢弃最旧的一条非系统消息，并累加其估算大小 (snipTokensFreed 逻辑)
+        msg = non_sys_msgs.pop(0)
+        dropped_tokens += rough_estimation_for_messages([msg])
+
+    # 保持原有的顺序
+    kept_uuids = {m.uuid for m in system_msgs + non_sys_msgs}
+    return [m for m in messages if m.uuid in kept_uuids]
 
 async def load_transcript_file(session_id: str) -> List[BaseMessage]:
     """
@@ -356,12 +433,13 @@ async def load_transcript_file(session_id: str) -> List[BaseMessage]:
 
     ordered_uuids.reverse()
 
+    # 应用上下文窗口压缩逻辑
+    ordered_entries = [entries_map[uid] for uid in ordered_uuids if uid in entries_map]
+    compressed_entries = compress_messages(ordered_entries)
+
     # 反序列化为 LangChain BaseMessage 实例
     reconstructed_messages = []
-    for uid in ordered_uuids:
-        if uid not in entries_map:
-            continue
-        entry = entries_map[uid]
+    for entry in compressed_entries:
         if entry.type == "user":
             msg = HumanMessage(content=entry.content, id=entry.uuid)
         elif entry.type == "assistant":
@@ -377,6 +455,8 @@ async def load_transcript_file(session_id: str) -> List[BaseMessage]:
                     for tc in entry.toolCalls
                 ]
             msg = AIMessage(content=entry.content, tool_calls=tool_calls, id=entry.uuid)
+            if entry.usage:
+                msg.usage_metadata = entry.usage
         elif entry.type == "tool_result":
             tool_call_id = ""
             if entry.toolResult:

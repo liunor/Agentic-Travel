@@ -378,11 +378,20 @@ async def main():
             config = {"configurable": {"thread_id": session_id}}
             try:
                 state = await app.aget_state(config)
-                last_processed_len = len(state.values.get("messages", []))
                 all_messages = state.values.get("messages", [])
+                last_processed_len = len(all_messages)
             except Exception:
                 last_processed_len = 0
                 all_messages = []
+
+            # 上下文窗口管理：裁剪超过 200K 的旧消息（保留 SystemMessage）
+            from server.agent.session_storage import trim_context
+            if all_messages:
+                trimmed = trim_context(all_messages)
+                if len(trimmed) < len(all_messages):
+                    await app.aupdate_state(config, {"messages": trimmed})
+                    all_messages = trimmed
+                    last_processed_len = len(trimmed)
 
             # 启动下一轮记忆预取（与 Coordinator LLM 并行执行）
             from langchain_core.messages import HumanMessage
