@@ -75,9 +75,13 @@ class SkillLoader:
             logger.warning("未找到 base_tools.yaml，基础工具列表为空")
 
     def _load_all_md_skills(self):
-        """扫描加载所有 md 文件的技能
+        """扫描加载所有技能。
 
-        读取 skills/ 目录下所有技能，放入 self.skills 字典中，键为技能名称
+        支持两种格式（按优先级）：
+        1. 目录格式: skills/<skill_name>/SKILL.md （推荐）
+        2. 单文件格式: skills/<skill_name>.md （兼容旧版）
+
+        技能放入 self.skills 字典中，键为技能名称。
 
         Returns:
             None:修改实例属性生效
@@ -87,13 +91,35 @@ class SkillLoader:
             logger.info("技能目录不存在，已自动创建", path=self.skills_dir)
             return
 
+        loaded = 0
+
+        # 优先扫描子目录中的 SKILL.md（Agent Skill 目录格式）
+        for entry in os.listdir(self.skills_dir):
+            entry_path = os.path.join(self.skills_dir, entry)
+            if os.path.isdir(entry_path):
+                skill_file = os.path.join(entry_path, "SKILL.md")
+                if os.path.isfile(skill_file):
+                    skill = self._parse_md_file(skill_file)
+                    if skill:
+                        self.skills[skill.name] = skill
+                        loaded += 1
+                        logger.debug("成功加载目录格式技能", skill_name=skill.name, dir=entry)
+
+        # 兼容旧版：扫描 skills/ 下的单文件 .md
         for filename in os.listdir(self.skills_dir):
-            if filename.endswith(".md"):
-                filepath = os.path.join(self.skills_dir, filename)
+            filepath = os.path.join(self.skills_dir, filename)
+            if os.path.isfile(filepath) and filename.endswith(".md"):
+                # 如果已经通过 SKILL.md 加载了同名技能，跳过
+                skill_name_candidate = filename[:-3]
+                if skill_name_candidate in self.skills:
+                    continue
                 skill = self._parse_md_file(filepath)
                 if skill:
                     self.skills[skill.name] = skill
-                    logger.debug("成功加载Markdown技能", skill_name=skill.name, file=filename)
+                    loaded += 1
+                    logger.debug("成功加载单文件技能", skill_name=skill.name, file=filename)
+
+        logger.info("技能加载完成", total=loaded)
 
     def _parse_md_file(self, filepath: str) -> MarkdownSkillSpec | None:
         """ 解析单个 Markdown 文件，提取技能信息
@@ -115,9 +141,11 @@ class SkillLoader:
                     md_body = parts[2].strip()
                     try:
                         meta = yaml.safe_load(yaml_text)
+                        # 兼容 Agent Skill 格式（description）和旧版格式（when_to_use）
+                        when_to_use = meta.get("when_to_use") or meta.get("description")
                         return MarkdownSkillSpec(
                             name=meta.get("name"),
-                            when_to_use=meta.get("when_to_use"),
+                            when_to_use=when_to_use,
                             allowed_tools=meta.get("allowed_tools", []),
                             prompt_sop=md_body
                         )
